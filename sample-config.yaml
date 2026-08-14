@@ -1,0 +1,36 @@
+version: 1
+corpus_root: fixtures/clean
+
+profiles:
+  notes:
+    include:
+      - notes/**/*.md
+    checks:
+      frontmatter:
+        required_keys: [title, description, type]
+        quoted_keys: [description]
+        type_enum: [memory, note]
+      links: true
+      managed_markers:
+        pairs:
+          - begin: "<!-- BEGIN MANAGED -->"
+            end: "<!-- END MANAGED -->"
+      staleness:
+        max_age_days: 30
+        updated_required: true
+      structure:
+        max_line_length: 120
+
+  indexes:
+    include:
+      - MEMORY.md
+    checks:
+      links: true
+      structure:
+        max_line_length: 120
+
+indexes:
+  - path: MEMORY.md
+    include:
+      - notes/**/*.md
+    exclude: []
