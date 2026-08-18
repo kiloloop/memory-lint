@@ -1,133 +1,169 @@
 # memory-lint
 
-`memory-lint` is a deterministic, flags-only linter for Markdown memory and
-documentation corpora. It reads target files and reports findings; it has no
-write or auto-fix path for the corpus.
+Deterministic, read-only linting for Markdown memory and documentation corpora.
 
-## Install
+## Why
 
-Install the released package from PyPI:
+Markdown knowledge bases rarely fail loudly. Links stop resolving, index rows
+drift away from the files they describe, managed sections lose their markers,
+and stale notes continue to look current. The prose still renders, so the
+damage can remain invisible until someone relies on it.
+
+Multi-agent work makes that failure mode more expensive. Several agents can
+read, generate, reorganize, and hand off the same corpus in parallel, while
+each assumes its inputs still satisfy the project's conventions. Reviewers
+need a repeatable structural check, not another subjective pass over every
+file.
+
+`memory-lint` turns those conventions into a deterministic check. It reports
+findings without changing the corpus, gives agents and CI the same result for
+the same corpus, configuration, and reference date, and can compare revisions
+without writing to Git.
+
+## Quick Start
+
+The first run is an install plus a small YAML configuration. Every run after
+that is one command.
+
+### With your coding agent
+
+Give your agent this prompt:
+
+```text
+Add a read-only Markdown corpus check to this repository with memory-lint 0.1.0
+from https://pypi.org/project/memory-lint/.
+
+Inspect the repository's Markdown layout and create a memory-lint YAML config
+whose profiles and indexes match the files that actually exist. Install the
+exact package version in the project's Python environment, then run
+memory-lint with --config, --format table, and an explicit current UTC date in
+--now. Report the exact command, exit status, finding count, and findings
+grouped by severity and code. Exit 1 means a successful lint with findings.
+Do not edit or auto-fix any corpus file unless I approve the proposed changes.
+```
+
+### Manually
+
+Install the exact published release:
 
 ```bash
-python -m pip install memory-lint
-memory-lint --help
+python -m pip install "memory-lint==0.1.0"
 ```
 
-For development from a clone:
+Python 3.10 or newer is required.
 
-```bash
-python3 -m venv .venv
-. .venv/bin/activate
-python -m pip install -e ".[dev]"
-memory-lint --config sample-config.yaml --now 2026-08-10
-memory-lint --config sample-config.yaml --format json --now 2026-08-10
-```
-
-Every input is a named flag. The CLI accepts no positional corpus path.
-`corpus_root` resolves relative to the config file; `--corpus-root` can point
-the same surface profiles at another corpus without editing the config.
-
-## Checks
-
-- **Frontmatter:** required top-level keys, quoted top-level scalar keys
-  (including `description`), and a configurable `type` enum per surface
-  profile.
-- **Links:** corpus-contained `[[wikilinks]]` and relative Markdown `.md`
-  links, including missing, escaping, and ambiguous targets.
-- **Indexes:** Markdown list rows whose targets are missing, duplicate rows,
-  and included files missing from the index. Table rows do not count as index
-  entries.
-- **Managed markers:** orphaned, nested, mismatched, and unclosed marker blocks.
-  These always report at `error` severity.
-- **Revision comparisons:** SHA-256-identical and whitespace-only file pairs;
-  under `--against`, missing linted files are errors and files that lose at
-  least half their lines are warnings.
-- **Staleness and structure:** configurable age checks for every unfenced
-  `*Updated:* YYYY-MM-DD` header, missing or invalid headers, duplicate heading
-  anchors, duplicate explicit anchors, and configurable maximum line length.
-
-Profiles select files and settings independently:
-
-```yaml
-version: 1
-corpus_root: ./docs
-profiles:
-  notes:
-    include: [notes/**/*.md]
-    exclude: [notes/archive/**/*.md]
-    checks:
-      frontmatter:
-        required_keys: [title, description, type]
-        quoted_keys: [description]
-        type_enum: [memory, note]
-      links: true
-      managed_markers:
-        pairs:
-          - begin: "<!-- BEGIN MANAGED -->"
-            end: "<!-- END MANAGED -->"
-      staleness:
-        max_age_days: 90
-        updated_required: true
-      structure:
-        max_line_length: 2000
-indexes:
-  - path: MEMORY.md
-    include: [notes/**/*.md]
-    exclude: [notes/archive/**/*.md]
-```
-
-Glob patterns and configured index paths may not be absolute, contain `..`, or
-end in a bare `**` component. Use a terminal file pattern such as `**/*.md` for
-recursive discovery. Resolved links are also contained to the corpus root.
-
-## Revision comparisons
-
-Compare two explicit revisions:
+Copy [`sample-config.yaml`](sample-config.yaml), then adjust `corpus_root`,
+profile globs, and index declarations to match your repository. Run from the
+repository root:
 
 ```bash
 memory-lint \
-  --config sample-config.yaml \
-  --compare-before fixtures/revisions/identical-before.md \
-  --compare-after fixtures/revisions/identical-after.md
+  --config memory-lint.yaml \
+  --format table \
+  --now "$(date -u +%F)"
 ```
 
-Compare linted files changed from a Git commit:
+Use the current UTC date for a normal run. Pinning `--now` makes staleness
+results reproducible in CI, tests, and recorded examples.
+
+## How It Works
+
+### One configuration, independent profiles
+
+The YAML configuration defines a corpus root, one or more profiles, and any
+indexes that must cover matching files. Each profile has its own include and
+exclude globs plus the checks that apply to that surface. `--corpus-root` can
+point the same policy at another snapshot without editing the configuration.
+
+Patterns and index paths must stay inside the corpus: they cannot be absolute,
+contain `..`, or end in a bare `**`. Use a terminal file pattern such as
+`**/*.md` for recursive discovery.
+
+### Stable finding codes
+
+Findings carry a severity, code, location, profile, and message. The codes are
+grouped by contract:
+
+- **Files and frontmatter:** `file-not-utf8`, `file-read-error`,
+  `frontmatter-missing`, `frontmatter-unclosed`, `frontmatter-invalid`,
+  `frontmatter-required-key`, `frontmatter-unquoted-value`, and
+  `frontmatter-type-enum`.
+- **Links:** `broken-link` and `ambiguous-wikilink` for relative Markdown links
+  and corpus-contained wikilinks.
+- **Managed markers:** `marker-nested`, `marker-orphaned`, and
+  `marker-unclosed`.
+- **Staleness and structure:** `updated-invalid`, `updated-in-future`,
+  `stale-updated`, `updated-missing`, `line-too-long`, `duplicate-heading`,
+  and `duplicate-anchor`.
+- **Indexes:** `index-file-missing`, `index-row-invalid`,
+  `index-missing-target`, `index-duplicate-entry`, and `index-missing-entry`.
+- **Revision comparisons:** `noop-identical`, `noop-whitespace-only`,
+  `file-missing-vs-ref`, and `file-shrunk-vs-ref`.
+
+### Read-only output contract
+
+`memory-lint` reads corpus files and, when requested, calls read-only Git
+commands. It has no corpus write or auto-fix path.
+
+`--format table` is for direct reading. `--format json` emits a versioned
+object with `corpus_root`, `finding_count`, and sorted finding objects.
+
+| Exit | Meaning |
+| --- | --- |
+| `0` | The configured corpus is clean. |
+| `1` | The lint completed and found one or more findings. |
+| `2` | A CLI, configuration, filesystem, or Git error prevented a valid run. |
+
+## Examples
+
+### A clean corpus
+
+This is the released CLI run against the repository's clean synthetic fixture:
+
+```console
+$ memory-lint --config sample-config.yaml --now 2026-08-10
+Clean — no findings.
+```
+
+### Machine-readable findings
 
 ```bash
-memory-lint --config path/to/config.yaml --against origin/main
+memory-lint \
+  --config memory-lint.yaml \
+  --format json \
+  --now 2026-08-10
+```
+
+The JSON finding objects are stable inputs for an agent, CI annotation step,
+or reporting script. Keep the exit status: an exit of `1` is findings, not a
+failure to execute.
+
+### Compare revisions
+
+Compare every linted file changed from a Git ref:
+
+```bash
+memory-lint --config memory-lint.yaml --against origin/main
+```
+
+Or compare one explicit before/after pair:
+
+```bash
+memory-lint \
+  --config memory-lint.yaml \
+  --compare-before before.md \
+  --compare-after after.md
 ```
 
 `--against` uses read-only `git rev-parse`, `git diff`, and `git show` calls.
 Added files have no earlier revision and are skipped by the no-op comparison.
-Files matched by a profile at the ref but deleted from the worktree emit
-`file-missing-vs-ref` errors. Modified files that lose at least 50% of their
-lines emit `file-shrunk-vs-ref` warnings.
 
-## Output and exit codes
+## Project
 
-`--format table` prints a stable human-readable table. `--format json` emits a
-versioned object containing `corpus_root`, `finding_count`, and sorted finding
-objects (`code`, `severity`, `path`, `line`, `message`, `profile`).
+- [PyPI package](https://pypi.org/project/memory-lint/)
+- [Source](https://github.com/kiloloop/memory-lint)
+- [Agent skill](https://github.com/kiloloop/kiloloop-skills/tree/main/skills/memory-lint)
 
-| Exit | Meaning |
-| --- | --- |
-| `0` | Clean |
-| `1` | One or more findings |
-| `2` | CLI, config, filesystem, or Git tool error |
+## License
 
-Use `--now YYYY-MM-DD` to pin staleness checks in CI and tests; otherwise the
-current UTC date is used.
-
-## Synthetic fixture suite
-
-All fixtures in this repository are invented for this tool. `fixtures/clean`
-must stay quiet. `fixtures/defects` plants all 13 core defect classes.
-`fixtures/revisions` contains explicit no-op pairs. No real user memory or
-vault content belongs here.
-
-```bash
-pytest -q
-```
-
-Releases are published from version tags through PyPI Trusted Publishing with
-attestations.
+Apache-2.0. See [`LICENSE`](LICENSE).
